@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Camera Preview + PiP</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        background: #000;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      }
+
+      .app {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      video {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        object-position: center;
+        display: block;
+        background: #000;
+      }
+
+      .controls {
+        position: absolute;
+        right: 16px;
+        bottom: 16px;
+        display: flex;
+        gap: 10px;
+        z-index: 10;
+      }
+
+      button {
+        border: 0;
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-size: 14px;
+        font-weight: 600;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.55);
+        backdrop-filter: blur(6px);
+        cursor: pointer;
+      }
+
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      .status {
+        position: absolute;
+        left: 16px;
+        bottom: 16px;
+        z-index: 10;
+        color: #fff;
+        font-size: 13px;
+        background: rgba(0, 0, 0, 0.45);
+        border-radius: 8px;
+        padding: 8px 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app">
+      <video id="preview" autoplay playsinline muted></video>
+
+      <div class="controls">
+        <button id="pipButton" type="button">进入画中画</button>
+      </div>
+
+      <div class="status" id="status">正在请求摄像头权限...</div>
+    </main>
+
+    <script>
+      const video = document.getElementById('preview')
+      const pipButton = document.getElementById('pipButton')
+      const statusText = document.getElementById('status')
+
+      function setStatus(text) {
+        statusText.textContent = text
+      }
+
+      function updatePipButton() {
+        pipButton.textContent = document.pictureInPictureElement ? '退出画中画' : '进入画中画'
+      }
+
+      async function startCamera() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('当前浏览器不支持 getUserMedia')
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        })
+
+        video.srcObject = stream
+        await video.play()
+        setStatus('摄像头已连接')
+      }
+
+      async function togglePiP() {
+        if (!document.pictureInPictureEnabled) {
+          setStatus('当前浏览器不支持 Picture-in-Picture')
+          return
+        }
+
+        try {
+          if (document.pictureInPictureElement) {
+            await document.exitPictureInPicture()
+            return
+          }
+
+          if (video.readyState < 2) {
+            await video.play()
+          }
+
+          await video.requestPictureInPicture()
+        } catch (error) {
+          setStatus(`PiP 操作失败: ${error.message}`)
+        }
+      }
+
+      pipButton.addEventListener('click', togglePiP)
+
+      video.addEventListener('enterpictureinpicture', () => {
+        updatePipButton()
+        setStatus('已进入画中画')
+      })
+
+      video.addEventListener('leavepictureinpicture', () => {
+        updatePipButton()
+        setStatus('已退出画中画')
+      })
+
+      if (!document.pictureInPictureEnabled) {
+        pipButton.disabled = true
+        setStatus('摄像头准备中（浏览器不支持 PiP）')
+      }
+
+      startCamera().catch((error) => {
+        setStatus(`无法打开摄像头: ${error.message}`)
+      })
+    </script>
+  </body>
+</html>
