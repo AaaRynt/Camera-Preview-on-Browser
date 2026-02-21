@@ -20,6 +20,7 @@
 或
 
 ``` bash
-git clone https://github.com/AaaRynt/web-video.git
+git clone https://github.com/AaaRynt/Camera-Preview-on-Browser.git
+cd Camera-Preview-on-Browser
 open index.html
 ```
