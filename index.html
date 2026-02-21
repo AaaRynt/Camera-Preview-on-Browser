@@ -159,11 +159,20 @@
         status: document.getElementById('status'),
       }
 
+      const pipCapabilities = Object.freeze({
+        standard:
+          typeof HTMLVideoElement.prototype.requestPictureInPicture === 'function' &&
+          document.pictureInPictureEnabled !== false,
+        webkit:
+          typeof HTMLVideoElement.prototype.webkitSupportsPresentationMode === 'function' &&
+          typeof HTMLVideoElement.prototype.webkitSetPresentationMode === 'function',
+      })
+
       const stateModel = {
         state: State.INIT,
         reason: null,
         errorCode: null,
-        pipSupported: Boolean(document.pictureInPictureEnabled),
+        pipSupported: pipCapabilities.standard || pipCapabilities.webkit,
         videoReady: false,
         actionLocked: false,
         previewMirrored: false,
@@ -273,13 +282,66 @@
       let pipFrameRequestId = null
       let requestToken = 0
       const supportsCanvasCapture = typeof HTMLCanvasElement.prototype.captureStream === 'function'
+      const useCanvasPipSource = supportsCanvasCapture && !pipCapabilities.webkit
 
       function getPiPElement() {
-        return supportsCanvasCapture ? el.pipSource : el.video
+        return useCanvasPipSource ? el.pipSource : el.video
       }
 
       function getPiPElementInPip() {
-        return document.pictureInPictureElement === getPiPElement()
+        if (pipCapabilities.standard && document.pictureInPictureElement === getPiPElement()) {
+          return true
+        }
+
+        return (
+          pipCapabilities.webkit && el.video.webkitPresentationMode === 'picture-in-picture'
+        )
+      }
+
+      async function enterPictureInPicture(element) {
+        if (
+          pipCapabilities.standard &&
+          typeof element.requestPictureInPicture === 'function' &&
+          document.pictureInPictureEnabled !== false
+        ) {
+          try {
+            await element.requestPictureInPicture()
+            return true
+          } catch (error) {
+            if (!pipCapabilities.webkit || error?.name !== 'NotSupportedError') {
+              throw error
+            }
+          }
+        }
+
+        if (
+          pipCapabilities.webkit &&
+          typeof element.webkitSupportsPresentationMode === 'function' &&
+          element.webkitSupportsPresentationMode('picture-in-picture')
+        ) {
+          element.webkitSetPresentationMode('picture-in-picture')
+          return true
+        }
+
+        return false
+      }
+
+      async function exitPictureInPictureIfActive() {
+        if (!getPiPElementInPip()) {
+          return
+        }
+
+        if (pipCapabilities.standard && document.pictureInPictureElement) {
+          await document.exitPictureInPicture()
+          return
+        }
+
+        if (
+          pipCapabilities.webkit &&
+          el.video.webkitPresentationMode === 'picture-in-picture'
+        ) {
+          el.video.webkitSetPresentationMode('inline')
+        }
       }
 
       function ensurePipCanvasSize(width, height) {
@@ -301,7 +363,7 @@
       }
 
       function drawPipFrame() {
-        if (!supportsCanvasCapture || !pipContext || !pipCanvas || !stateModel.videoReady) {
+        if (!useCanvasPipSource || !pipContext || !pipCanvas || !stateModel.videoReady) {
           return
         }
 
@@ -328,7 +390,7 @@
       }
 
       function startPipRenderLoop() {
-        if (!supportsCanvasCapture || pipFrameRequestId !== null) {
+        if (!useCanvasPipSource || pipFrameRequestId !== null) {
           return
         }
 
@@ -341,7 +403,7 @@
       }
 
       function stopPipStream() {
-        if (!supportsCanvasCapture) {
+        if (!useCanvasPipSource) {
           return
         }
 
@@ -361,7 +423,7 @@
           return false
         }
 
-        if (!supportsCanvasCapture) {
+        if (!useCanvasPipSource) {
           return true
         }
 
@@ -445,7 +507,7 @@
 
         if (getPiPElementInPip()) {
           try {
-            await document.exitPictureInPicture()
+            await exitPictureInPictureIfActive()
           } catch (error) {
             // Ignore exit errors during shutdown.
           }
@@ -556,7 +618,7 @@
 
         try {
           if (getPiPElementInPip()) {
-            await document.exitPictureInPicture()
+            await exitPictureInPictureIfActive()
             return
           }
 
@@ -572,7 +634,10 @@
           }
 
           startPipRenderLoop()
-          await getPiPElement().requestPictureInPicture()
+          const entered = await enterPictureInPicture(getPiPElement())
+          if (!entered) {
+            setState(State.ERROR, { errorCode: ErrorCode.PIP_NOT_SUPPORTED })
+          }
         } catch (error) {
           setState(State.ERROR, { errorCode: ErrorCode.PIP_FAILED })
         } finally {
@@ -661,6 +726,14 @@
         el.video.addEventListener('leavepictureinpicture', handleLeavePiP)
         el.pipSource.addEventListener('enterpictureinpicture', handleEnterPiP)
         el.pipSource.addEventListener('leavepictureinpicture', handleLeavePiP)
+        el.video.addEventListener('webkitpresentationmodechanged', () => {
+          if (el.video.webkitPresentationMode === 'picture-in-picture') {
+            handleEnterPiP()
+            return
+          }
+
+          handleLeavePiP()
+        })
 
         document.addEventListener('visibilitychange', () => {
           if (document.visibilityState === 'hidden') {
